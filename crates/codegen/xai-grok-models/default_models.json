@@ -75,6 +75,34 @@
           "description": "Quick, fast implementations"
         }
       ]
+    },
+    {
+      "id": "deepseek-chat",
+      "model": "deepseek-chat",
+      "model_family": "deepseek",
+      "base_url": "https://api.deepseek.com/v1",
+      "env_key": "DEEPSEEK_API_KEY",
+      "name": "DeepSeek Chat",
+      "description": "DeepSeek V3 via OpenAI-compatible Chat Completions API",
+      "context_window": 128000,
+      "api_backend": "chat_completions",
+      "supports_backend_search": false,
+      "system_prompt_label": "DeepSeek Chat",
+      "auto_compact_threshold_percent": 80
+    },
+    {
+      "id": "deepseek-reasoner",
+      "model": "deepseek-reasoner",
+      "model_family": "deepseek",
+      "base_url": "https://api.deepseek.com/v1",
+      "env_key": "DEEPSEEK_API_KEY",
+      "name": "DeepSeek Reasoner",
+      "description": "DeepSeek Reasoner via OpenAI-compatible Chat Completions API",
+      "context_window": 128000,
+      "api_backend": "chat_completions",
+      "supports_backend_search": false,
+      "system_prompt_label": "DeepSeek Reasoner",
+      "auto_compact_threshold_percent": 80
     }
   ]
 }

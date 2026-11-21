@@ -3149,6 +3149,8 @@ struct DefaultModelJson {
     id: Option<String>,
     model: String,
     model_family: Option<String>,
+    base_url: Option<String>,
+    env_key: Option<EnvKeys>,
     name: Option<String>,
     description: Option<String>,
     context_window: Option<NonZeroU64>,
@@ -3217,12 +3219,19 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                     Vec::new(),
                 )
             });
+            let has_custom_base_url = m.base_url.is_some();
             let config = ModelEntryConfig {
                 id: m.id,
                 model: m.model,
                 model_family: m.model_family,
-                base_url: endpoints.resolve_inference_base_url(),
-                api_base_url: Some(endpoints.xai_api_base_url.clone()),
+                base_url: m
+                    .base_url
+                    .unwrap_or_else(|| endpoints.resolve_inference_base_url()),
+                api_base_url: if has_custom_base_url {
+                    None
+                } else {
+                    Some(endpoints.xai_api_base_url.clone())
+                },
                 name: m.name,
                 description: m.description,
                 notice: m.notice.and_then(ModelNotice::normalized),
@@ -3242,7 +3251,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 rate_limit_retry_threshold: None,
                 subagent_rate_limit_max_attempts: None,
                 api_key: None,
-                env_key: None,
+                env_key: m.env_key,
                 extra_headers: IndexMap::new(),
                 use_concise: false,
                 hidden: m.hidden,

@@ -1666,6 +1666,9 @@ fn auth_scheme_defaults_to_bearer_when_not_set_in_config() {
 fn has_own_credentials_guards_session_vs_external_key() {
     let endpoints = EndpointsConfig::default();
     for (model_id, entry) in default_model_entries(&endpoints) {
+        if entry.env_key.is_some() {
+            continue;
+        }
         assert!(
             !entry.has_own_credentials(),
             "{model_id}: Default model must not claim own credentials"
@@ -1679,6 +1682,23 @@ fn has_own_credentials_guards_session_vs_external_key() {
         None,
     );
     assert!(config_model.has_own_credentials());
+}
+#[test]
+fn builtin_deepseek_models_use_deepseek_endpoint_and_env_key() {
+    let endpoints = EndpointsConfig::default();
+    let entries = default_model_entries(&endpoints);
+    for id in ["deepseek-chat", "deepseek-reasoner"] {
+        let entry = entries
+            .get(id)
+            .unwrap_or_else(|| panic!("expected built-in DeepSeek model `{id}`"));
+        assert_eq!(entry.base_url, "https://api.deepseek.com/v1");
+        assert_eq!(entry.api_backend, ApiBackend::ChatCompletions);
+        assert!(entry.api_base_url.is_none());
+        assert_eq!(
+            entry.env_key.as_ref(),
+            Some(&EnvKeys::single("DEEPSEEK_API_KEY"))
+        );
+    }
 }
 /// The `ConfigUnavailable → Unknown` arm matters for safety.
 /// A transient config failure must not read as a definite `NotByok`, which would drive the live resolver and could overwrite a per-model BYOK key.
