@@ -532,7 +532,7 @@ impl ModelsManager {
     ) -> bool {
         let base_url = base_url.trim_end_matches('/');
         self.with_catalog_entry(model_id, |e| {
-            !e.has_own_credentials()
+            !e.is_byok_route()
                 && e.info().api_backend == *api_backend
                 && (e.info().base_url.trim_end_matches('/') == base_url
                     || e.api_base_url

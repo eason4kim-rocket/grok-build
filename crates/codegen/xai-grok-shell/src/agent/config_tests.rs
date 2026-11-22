@@ -1663,12 +1663,11 @@ fn auth_scheme_defaults_to_bearer_when_not_set_in_config() {
     assert_eq!(info.auth_type, "bearer");
 }
 #[test]
+#[serial]
 fn has_own_credentials_guards_session_vs_external_key() {
+    let _deepseek = EnvGuard::unset("DEEPSEEK_API_KEY");
     let endpoints = EndpointsConfig::default();
     for (model_id, entry) in default_model_entries(&endpoints) {
-        if entry.env_key.is_some() {
-            continue;
-        }
         assert!(
             !entry.has_own_credentials(),
             "{model_id}: Default model must not claim own credentials"
@@ -1699,6 +1698,82 @@ fn builtin_deepseek_models_use_deepseek_endpoint_and_env_key() {
             Some(&EnvKeys::single("DEEPSEEK_API_KEY"))
         );
     }
+}
+/// Regression: a built-in third-party model without its own key must fail closed.
+/// Falling through would send the grok.com session token or `XAI_API_KEY` to `api.deepseek.com`.
+#[test]
+#[serial]
+fn builtin_deepseek_without_key_never_receives_xai_credentials() {
+    use crate::agent::auth_method::{LEGACY_XAI_API_KEY_ENV_VAR, XAI_API_KEY_ENV_VAR};
+    use xai_chat_state::AuthType;
+    let _deepseek = EnvGuard::unset("DEEPSEEK_API_KEY");
+    let _global = EnvGuard::set(XAI_API_KEY_ENV_VAR, "xai-global-sentinel-key");
+    let _legacy = EnvGuard::unset(LEGACY_XAI_API_KEY_ENV_VAR);
+    let entries = default_model_entries(&EndpointsConfig::default());
+    for id in ["deepseek-chat", "deepseek-reasoner"] {
+        let entry = entries.get(id).expect("built-in DeepSeek model");
+        assert!(
+            !entry.has_own_credentials(),
+            "{id}: an unset DEEPSEEK_API_KEY must not count as BYOK (would skip login)"
+        );
+        assert!(
+            entry.targets_builtin_third_party(),
+            "{id}: must be recognized as a built-in third-party route"
+        );
+        assert!(
+            entry.is_byok_route(),
+            "{id}: must never be treated as session-authed"
+        );
+        let creds = resolve_credentials(entry, Some("session-jwt"));
+        assert_eq!(
+            creds.api_key, None,
+            "{id}: neither the session token nor XAI_API_KEY may reach a third-party endpoint"
+        );
+        assert_eq!(creds.auth_type, AuthType::ApiKey);
+        assert_eq!(creds.base_url, "https://api.deepseek.com/v1");
+        assert_eq!(
+            byok_from_lookup(&ModelLookup::Loaded(Some(entry))),
+            ModelByok::Byok,
+            "{id}: NotByok would arm the session-token refresh for this route"
+        );
+    }
+}
+#[test]
+#[serial]
+fn builtin_deepseek_with_key_uses_only_its_own_key() {
+    use xai_chat_state::AuthType;
+    let _deepseek = EnvGuard::set("DEEPSEEK_API_KEY", "sk-deepseek-test");
+    let entries = default_model_entries(&EndpointsConfig::default());
+    let entry = entries.get("deepseek-chat").expect("built-in DeepSeek model");
+    assert!(entry.has_own_credentials());
+    let creds = resolve_credentials(entry, Some("session-jwt"));
+    assert_eq!(creds.api_key.as_deref(), Some("sk-deepseek-test"));
+    assert_eq!(creds.auth_type, AuthType::ApiKey);
+    assert_eq!(creds.base_url, "https://api.deepseek.com/v1");
+}
+/// The built-in third-party catalog must not, by itself, make the login screen disappear.
+#[test]
+#[serial]
+fn builtin_third_party_models_do_not_advertise_api_key_without_keys() {
+    use crate::agent::auth_method::{
+        LEGACY_XAI_API_KEY_ENV_VAR, XAI_API_KEY_ENV_VAR, should_advertise_xai_api_key,
+    };
+    let _deepseek = EnvGuard::unset("DEEPSEEK_API_KEY");
+    let _global = EnvGuard::unset(XAI_API_KEY_ENV_VAR);
+    let _legacy = EnvGuard::unset(LEGACY_XAI_API_KEY_ENV_VAR);
+    let entries = default_model_entries(&EndpointsConfig::default());
+    assert!(!should_advertise_xai_api_key(false, entries.values()));
+}
+#[test]
+fn builtin_third_party_hosts_exclude_xai_endpoints() {
+    assert!(is_builtin_third_party_url("https://api.deepseek.com/v1"));
+    assert!(is_builtin_third_party_url("https://API.DeepSeek.com/beta"));
+    assert!(!is_builtin_third_party_url("https://api.x.ai/v1"));
+    assert!(!is_builtin_third_party_url("https://api.deepseek.com.evil.example/v1"));
+    assert!(!is_builtin_third_party_url("not a url"));
+    let user_model = test_model_entry("mine", "https://api.example.com/v1", None, None, None);
+    assert!(!user_model.targets_builtin_third_party());
+    assert!(!user_model.is_byok_route());
 }
 /// The `ConfigUnavailable → Unknown` arm matters for safety.
 /// A transient config failure must not read as a definite `NotByok`, which would drive the live resolver and could overwrite a per-model BYOK key.

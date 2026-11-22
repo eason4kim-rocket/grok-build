@@ -897,7 +897,7 @@ fn subagent_auth_type(
     model: Option<&crate::agent::config::ModelEntry>,
     auth_method_id: &acp::AuthMethodId,
 ) -> xai_chat_state::AuthType {
-    if model.is_some_and(|m| m.has_own_credentials()) {
+    if model.is_some_and(|m| m.is_byok_route()) {
         xai_chat_state::AuthType::ApiKey
     } else if crate::agent::auth_method::is_session_based_method(auth_method_id) {
         xai_chat_state::AuthType::SessionToken
@@ -943,7 +943,7 @@ fn resolve_model_override_to_config(
     {
         session_bearer_resolver(
             ctx,
-            if entry.has_own_credentials() {
+            if entry.is_byok_route() {
                 crate::agent::auth_method::ModelByok::Byok
             } else {
                 crate::agent::auth_method::ModelByok::NotByok

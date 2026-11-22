@@ -3989,6 +3989,47 @@ impl ModelEntry {
     pub(crate) fn has_own_credentials(&self) -> bool {
         self.own_credential().is_some() || self.auth_provider.is_some()
     }
+    /// `true` when this model routes to a third-party host declared by the built-in catalog (e.g. `api.deepseek.com`).
+    /// Such a host may only ever receive the model's own credential, never the xAI session token or `XAI_API_KEY`.
+    pub(crate) fn targets_builtin_third_party(&self) -> bool {
+        is_builtin_third_party_url(&self.info.base_url)
+            || self
+                .api_base_url
+                .as_deref()
+                .is_some_and(is_builtin_third_party_url)
+    }
+    /// Session-routing view of BYOK: own credentials, or a built-in third-party route that is never session-authed even before its key is set.
+    /// Unlike [`Self::has_own_credentials`], this does not imply a usable key, so it must not gate login.
+    pub(crate) fn is_byok_route(&self) -> bool {
+        self.has_own_credentials() || self.targets_builtin_third_party()
+    }
+}
+/// Lowercased hosts of the non-xAI endpoints that `default_models.json` routes built-in models to.
+fn builtin_third_party_hosts() -> &'static [String] {
+    static HOSTS: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+        let root: serde_json::Value =
+            serde_json::from_str(crate::models::DEFAULT_MODELS_JSON).unwrap_or_default();
+        let mut hosts: Vec<String> = root
+            .get("models")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m.get("base_url")?.as_str())
+            .filter(|url| !crate::util::is_xai_api_url(url))
+            .filter_map(|url| Some(reqwest::Url::parse(url).ok()?.host_str()?.to_ascii_lowercase()))
+            .collect();
+        hosts.sort();
+        hosts.dedup();
+        hosts
+    });
+    &HOSTS
+}
+/// `true` when `url`'s host is a third-party endpoint declared by the built-in model catalog.
+pub(crate) fn is_builtin_third_party_url(url: &str) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+        .is_some_and(|host| builtin_third_party_hosts().contains(&host))
 }
 impl std::ops::Deref for ModelEntry {
     type Target = ModelInfo;
@@ -4307,6 +4348,8 @@ pub(crate) fn resolve_credentials(
     session_key: Option<&str>,
 ) -> ResolvedCredentials {
     let info = model.info();
+    // A built-in third-party route takes only its own key: never fall through to xAI credentials.
+    let xai_fallback_blocked = model.targets_builtin_third_party();
     let (api_key, base_url, auth_type) = if let Some(key) = model.own_credential() {
         (
             Some(key),
@@ -4321,6 +4364,7 @@ pub(crate) fn resolve_credentials(
             xai_chat_state::AuthType::ApiKey,
         )
     } else if let Some(key) = session_key
+        && !xai_fallback_blocked
         && xai_grok_login::backend::AuthBackend::may_receive_session(
             &xai_grok_login::backend::ActiveAuthBackend::default(),
             &info.base_url,
@@ -4331,7 +4375,9 @@ pub(crate) fn resolve_credentials(
             info.base_url.clone(),
             xai_chat_state::AuthType::SessionToken,
         )
-    } else if let Ok(key) = crate::agent::auth_method::read_xai_api_key_env() {
+    } else if !xai_fallback_blocked
+        && let Ok(key) = crate::agent::auth_method::read_xai_api_key_env()
+    {
         let url = model
             .api_base_url
             .clone()
@@ -4465,7 +4511,7 @@ pub(crate) fn resolve_model_auth_facts_and_provider(
 fn byok_from_lookup(lookup: &ModelLookup) -> ModelByok {
     match lookup {
         ModelLookup::ConfigUnavailable => ModelByok::Unknown,
-        ModelLookup::Loaded(Some(e)) if e.has_own_credentials() => ModelByok::Byok,
+        ModelLookup::Loaded(Some(e)) if e.is_byok_route() => ModelByok::Byok,
         ModelLookup::Loaded(_) => ModelByok::NotByok,
     }
 }
